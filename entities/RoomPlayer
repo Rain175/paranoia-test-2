@@ -27,5 +27,11 @@
     "room_code",
     "name",
     "session_id"
-  ]
+  ],
+  "rls": {
+    "create": true,
+    "read": true,
+    "update": true,
+    "delete": true
+  }
 }

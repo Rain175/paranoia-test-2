@@ -1,7 +1,12 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
-
 import React, { useState, useEffect } from "react";
-
+import { db } from "@/lib/firebase";
+import {
+  doc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+} from "firebase/firestore";
 import { getSessionId } from "@/lib/session";
 import OnlineLobby from "@/components/paranoia/online/OnlineLobby";
 import HostLobby from "@/components/paranoia/online/HostLobby";
@@ -26,46 +31,30 @@ export default function OnlineGame({ onExit }) {
 
     let cancelled = false;
 
-    const fetchRoom = async () => {
-      try {
-        const rooms = await db.entities.GameRoom.filter({ room_code: roomCode });
-        if (!cancelled && rooms.length > 0) {
-          setRoom(rooms[0]);
-        } else if (!cancelled) {
+    const unsubRoom = onSnapshot(
+      doc(db, "game_rooms", roomCode),
+      (snap) => {
+        if (cancelled) return;
+        if (!snap.exists()) {
           setRoomCode("");
+          return;
         }
-      } catch (e) {
+        setRoom({ id: snap.id, ...snap.data() });
+      },
+      () => {
         if (!cancelled) setRoomCode("");
       }
-    };
+    );
 
-    const fetchPlayers = async () => {
-      try {
-        const ps = await db.entities.RoomPlayer.filter({ room_code: roomCode });
-        if (!cancelled) {
-          setPlayers(ps.sort((a, b) => (a.order || 0) - (b.order || 0)));
-        }
-      } catch (e) {}
-    };
-
-    fetchRoom();
-    fetchPlayers();
-
-    const unsubRoom = db.entities.GameRoom.subscribe((event) => {
-      if (event.data?.room_code !== roomCode) return;
-      if (event.type === "update" || event.type === "create") {
-        setRoom(event.data);
-      } else if (event.type === "delete") {
-        setRoom(null);
-        setRoomCode("");
+    const unsubPlayers = onSnapshot(
+      query(collection(db, "room_players"), where("room_code", "==", roomCode)),
+      (snap) => {
+        if (cancelled) return;
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setPlayers(list);
       }
-    });
-
-    const unsubPlayers = db.entities.RoomPlayer.subscribe((event) => {
-      if (event.data?.room_code === roomCode) {
-        fetchPlayers();
-      }
-    });
+    );
 
     return () => {
       cancelled = true;

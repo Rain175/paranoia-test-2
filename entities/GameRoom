@@ -83,5 +83,11 @@
     "room_code",
     "host_session_id",
     "host_name"
-  ]
+  ],
+  "rls": {
+    "create": true,
+    "read": true,
+    "update": true,
+    "delete": true
+  }
 }

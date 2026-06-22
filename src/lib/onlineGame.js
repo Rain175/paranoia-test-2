@@ -1,6 +1,17 @@
-const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
-
-
+import {
+  db,
+} from "./firebase";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+} from "firebase/firestore";
 import { QUESTIONS, shuffle } from "./gameData";
 import { getSessionId, generateRoomCode } from "./session";
 
@@ -8,7 +19,7 @@ export async function createRoom(hostName, categories) {
   const code = generateRoomCode();
   const sessionId = getSessionId();
 
-  await db.entities.GameRoom.create({
+  await setDoc(doc(db, "game_rooms", code), {
     room_code: code,
     status: "lobby",
     phase: "question",
@@ -23,7 +34,7 @@ export async function createRoom(hostName, categories) {
     coin_result: "",
   });
 
-  await db.entities.RoomPlayer.create({
+  await addDoc(collection(db, "room_players"), {
     room_code: code,
     name: hostName,
     session_id: sessionId,
@@ -38,25 +49,32 @@ export async function joinRoom(code, name) {
   const sessionId = getSessionId();
   const upperCode = code.toUpperCase().trim();
 
-  const rooms = await db.entities.GameRoom.filter({ room_code: upperCode });
-  if (rooms.length === 0) throw new Error("Room not found");
+  const roomRef = doc(db, "game_rooms", upperCode);
+  const roomSnap = await getDoc(roomRef);
+  if (!roomSnap.exists()) throw new Error("Room not found");
 
-  const room = rooms[0];
+  const room = roomSnap.data();
   if (room.status === "ended") throw new Error("This game has ended");
 
-  const existing = await db.entities.RoomPlayer.filter({
-    room_code: upperCode,
-    session_id: sessionId,
-  });
+  const existingQuery = query(
+    collection(db, "room_players"),
+    where("room_code", "==", upperCode),
+    where("session_id", "==", sessionId)
+  );
+  const existingSnap = await getDocs(existingQuery);
 
-  if (existing.length === 0) {
+  if (existingSnap.empty) {
     if (room.status === "playing") throw new Error("Game already in progress");
-    const players = await db.entities.RoomPlayer.filter({ room_code: upperCode });
-    await db.entities.RoomPlayer.create({
+    const allPlayersQuery = query(
+      collection(db, "room_players"),
+      where("room_code", "==", upperCode)
+    );
+    const allPlayersSnap = await getDocs(allPlayersQuery);
+    await addDoc(collection(db, "room_players"), {
       room_code: upperCode,
       name,
       session_id: sessionId,
-      order: players.length,
+      order: allPlayersSnap.size,
       is_host: false,
     });
   }
@@ -64,7 +82,7 @@ export async function joinRoom(code, name) {
   return upperCode;
 }
 
-export async function startGame(roomId, categories, players) {
+export async function startGame(roomCode, categories, players) {
   const shuffledPlayers = shuffle(
     players.map((p) => ({ name: p.name, session_id: p.session_id }))
   );
@@ -74,7 +92,7 @@ export async function startGame(roomId, categories, players) {
   const allQuestions = selectedCats.flatMap((cat) => QUESTIONS[cat]);
   const shuffledQ = shuffle(allQuestions);
 
-  await db.entities.GameRoom.update(roomId, {
+  await updateDoc(doc(db, "game_rooms", roomCode), {
     status: "playing",
     phase: "question",
     round: 0,
@@ -86,25 +104,25 @@ export async function startGame(roomId, categories, players) {
   });
 }
 
-export async function flipCoin(roomId) {
+export async function flipCoin(roomCode) {
   const result = Math.random() < 0.5 ? "heads" : "tails";
-  await db.entities.GameRoom.update(roomId, {
+  await updateDoc(doc(db, "game_rooms", roomCode), {
     phase: "result",
     coin_result: result,
   });
 }
 
-export async function nextRound(roomId, room) {
+export async function nextRound(roomCode, room) {
   const nextRoundNum = room.round + 1;
   const playerCount = room.players?.length || 1;
 
   if (nextRoundNum >= (room.questions?.length || 0)) {
-    await db.entities.GameRoom.update(roomId, { status: "ended" });
+    await updateDoc(doc(db, "game_rooms", roomCode), { status: "ended" });
     return;
   }
 
   const nextAsker = nextRoundNum % playerCount;
-  await db.entities.GameRoom.update(roomId, {
+  await updateDoc(doc(db, "game_rooms", roomCode), {
     round: nextRoundNum,
     asker_idx: nextAsker,
     phase: "question",
